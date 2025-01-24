@@ -3,6 +3,7 @@ from openai import OpenAI
 import tempfile
 import os
 from pydub import AudioSegment
+import tiktoken
 
 CHUNK_SIZE = 24 * 1024 * 1024
 MAX_SINGLE_FILE = 25 * 1024 * 1024
@@ -43,35 +44,147 @@ def transcribe_chunks(client, chunk_files):
         os.unlink(chunk_file)
     return full_transcript.strip()
 
-def clean_transcript(client, transcript, title, description):
-    response = client.chat.completions.create(
-        model="gpt-4",
-        messages=[
-            {"role": "system", "content": """
-            # IDENTITY and PURPOSE
+# Add token counting function
+def count_tokens(text, model="gpt-4"):
+    encoding = tiktoken.encoding_for_model(model)
+    return len(encoding.encode(text))
 
-            You are an expert at cleaning up broken and, malformatted, text, and formatting meeting transcripts. For example: line breaks in weird places, etc. 
+# Add text chunking function
+def chunk_text(text, max_tokens=30000):
+    sentences = text.split('. ')
+    chunks = []
+    current_chunk = []
+    current_length = 0
+    
+    for sentence in sentences:
+        sentence_tokens = count_tokens(sentence)
+        if current_length + sentence_tokens > max_tokens:
+            chunks.append('. '.join(current_chunk) + '.')
+            current_chunk = [sentence]
+            current_length = sentence_tokens
+        else:
+            current_chunk.append(sentence)
+            current_length += sentence_tokens
+    
+    if current_chunk:
+        chunks.append('. '.join(current_chunk) + '.')
+    return chunks
 
-            # Steps
+def clean_transcript_in_chunks(client, transcript, title, description):
+    chunks = chunk_text(transcript)
+    cleaned_chunks = []
+    
+    for i, chunk in enumerate(chunks):
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": """
+                # IDENTITY and PURPOSE
 
-            - Read the entire document and fully understand it.
-            - Remove any strange line breaks that disrupt formatting.
-            - Add capitalization, punctuation, line breaks, paragraphs and other formatting where necessary.
-            - Do NOT change any content or spelling whatsoever.
+                You are an expert at cleaning up broken and, malformatted, text, and formatting meeting transcripts. For example: line breaks in weird places, etc. 
 
-            # OUTPUT INSTRUCTIONS
+                # Steps
 
-            - Output the full, properly-formatted text.
-            - Do not output warnings or notes—just the requested sections.
+                - Read the entire document and fully understand it.
+                - Remove any strange line breaks that disrupt formatting.
+                - Add capitalization, punctuation, line breaks, paragraphs and other formatting where necessary.
+                - Do NOT change any content or spelling whatsoever.
 
-            # INPUT:
+                # OUTPUT INSTRUCTIONS
 
-            INPUT:
-            """},
-            {"role": "user", "content": f"Title: {title}\nDescription: {description}\n\nTranscript to clean:\n{transcript}"}
-        ]
-    )
-    return response.choices[0].message.content
+                - Output the full, properly-formatted text.
+                - Do not output warnings or notes—just the requested sections.
+
+                # INPUT:
+
+                INPUT:
+                """},
+                {"role": "user", "content": f"Part {i+1}/{len(chunks)}\nTitle: {title}\nDescription: {description}\n\nTranscript chunk:\n{chunk}"}
+            ]
+        )
+        cleaned_chunks.append(response.choices[0].message.content)
+    
+    return ' '.join(cleaned_chunks)
+
+def clean_transcript_in_chunks(client, transcript, title, description):
+    chunks = chunk_text(transcript)
+    cleaned_chunks = []
+    
+    # First pass: Clean each chunk
+    for i, chunk in enumerate(chunks):
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": """
+                # IDENTITY and PURPOSE
+
+                You are an expert at cleaning up broken and, malformatted, text, and formatting meeting transcripts. For example: line breaks in weird places, etc. 
+
+                # Steps
+
+                - Read the entire document and fully understand it.
+                - Remove any strange line breaks that disrupt formatting.
+                - Add capitalization, punctuation, line breaks, paragraphs and other formatting where necessary.
+                - Do NOT change any content or spelling whatsoever.
+
+                # OUTPUT INSTRUCTIONS
+
+                - Output the full, properly-formatted text.
+                - Do not output warnings or notes—just the requested sections.
+
+                # INPUT:
+
+                INPUT:
+                """},
+                {"role": "user", "content": f"Part {i+1}/{len(chunks)}\nTitle: {title}\nDescription: {description}\n\nTranscript chunk:\n{chunk}"}
+            ]
+        )
+        cleaned_chunks.append(response.choices[0].message.content)
+    
+    # Second pass: Summarize the cleaned chunks
+    combined_clean = " ".join(cleaned_chunks)
+    if count_tokens(combined_clean) > 30000:
+        final_response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "Create a concise summary of this meeting transcript, focusing on key points, decisions, and action items."},
+                {"role": "user", "content": f"Title: {title}\nDescription: {description}\n\nTranscript:\n{combined_clean}"}
+            ]
+        )
+        return final_response.choices[0].message.content
+    
+    return combined_clean
+
+# def clean_transcript(client, transcript, title, description):
+#     response = client.chat.completions.create(
+#         model="gpt-4",
+#         messages=[
+#             {"role": "system", "content": """
+#             # IDENTITY and PURPOSE
+
+#             You are an expert at cleaning up broken and, malformatted, text, and formatting meeting transcripts. For example: line breaks in weird places, etc. 
+
+#             # Steps
+
+#             - Read the entire document and fully understand it.
+#             - Remove any strange line breaks that disrupt formatting.
+#             - Add capitalization, punctuation, line breaks, paragraphs and other formatting where necessary.
+#             - Do NOT change any content or spelling whatsoever.
+
+#             # OUTPUT INSTRUCTIONS
+
+#             - Output the full, properly-formatted text.
+#             - Do not output warnings or notes—just the requested sections.
+
+#             # INPUT:
+
+#             INPUT:
+#             """},
+#             {"role": "user", "content": f"Title: {title}\nDescription: {description}\n\nTranscript to clean:\n{transcript}"}
+#         ]
+#     )
+#     return response.choices[0].message.content
+
 
 def generate_minutes(client, cleaned_text, title, description):
     response = client.chat.completions.create(
