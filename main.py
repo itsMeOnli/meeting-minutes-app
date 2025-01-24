@@ -186,69 +186,91 @@ def clean_transcript_in_chunks(client, transcript, title, description):
 
 
 def generate_minutes(client, cleaned_text, title, description):
-    response = client.chat.completions.create(
-        model="gpt-4",
-        messages=[
-            {"role": "system", "content": 
-            """
-            # IDENTITY and PURPOSE:
-            You are an AI assistant specialized in transforming meeting transcripts into structured meeting minutes. Your role is to carefully analyze meeting transcripts, identify key agenda topics, extract relevant discussion points, and generate appropriate recommendations and action plans. 
+    MINUTES_PROMPT = """[Your provided prompt here]"""
+    
+    # Split cleaned text into ~6k token chunks (leaving room for prompt)
+    chunks = chunk_text(cleaned_text, max_tokens=6000)
+    minutes_sections = []
+    
+    for i, chunk in enumerate(chunks):
+        time.sleep(3)  # Rate limit handling
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4",
+                messages=[
+                    {"role": "system", "content": MINUTES_PROMPT},
+                    {"role": "user", "content": f"Meeting Title: {title}\nDescription: {description}\nPart {i+1}/{len(chunks)}\n\nTranscript:\n{chunk}"}
+                ]
+            )
+            minutes_sections.append(response.choices[0].message.content)
+        except Exception as e:
+            st.error(f"Error generating minutes for chunk {i+1}: {str(e)}")
+            time.sleep(60)
+            continue
+    
+    # Combine sections intelligently
+    combined_minutes = consolidate_minutes_sections(minutes_sections)
+    return combined_minutes
 
-            Your expertise lies in maintaining organizational clarity while ensuring all critical information from the meeting is captured and presented in a standardized format. You excel at identifying main topics, categorizing discussion points, and synthesizing recommendations based on the meeting content.
+def consolidate_minutes_sections(sections):
+    """Intelligently merge multiple meeting minutes sections"""
+    if len(sections) == 1:
+        return sections[0]
+        
+    # Initialize containers for each section type
+    agenda_topics = []
+    discussion_topics = []
+    recommendations = []
+    action_items = []
+    
+    # Parse and combine sections
+    for section in sections:
+        parts = section.split('#')
+        for part in parts:
+            if 'Meeting Agenda Topics' in part:
+                agenda_topics.extend(extract_numbered_items(part))
+            elif 'Discussion Topics' in part:
+                discussion_topics.extend(extract_numbered_items(part))
+            elif 'Recommendation' in part:
+                recommendations.extend(extract_bullet_points(part))
+            elif 'Action Plan' in part:
+                action_items.extend(extract_bullet_points(part))
 
-            Take a step back and think step-by-step about how to achieve the best possible results by following the steps below.
+    # Combine into final format
+    return f"""# Meeting Agenda Topics
+{format_numbered_list(deduplicate_list(agenda_topics))}
 
-            # STEPS:
-            - Extract a summary of the role the AI will be taking to fulfil this pattern into a section called IDENTITY and PURPOSE
+# Discussion Topics
+{format_numbered_list(deduplicate_list(discussion_topics))}
 
-            - Extract a step by step set of instructions the AI will need to follow in order to complete this pattern into a section called STEPS
+# Recommendation
+{format_bullet_points(deduplicate_list(recommendations))}
 
-            - Analyze the prompt to determine what format the output should be in
+# Action Plan
+{format_bullet_points(deduplicate_list(action_items))}"""
 
-            - Extract any specific instructions for how the output should be formatted into a section called OUTPUT INSTRUCTIONS
+def extract_numbered_items(text):
+    """Extract numbered items from text"""
+    import re
+    items = re.findall(r'\d+\.\s*(.*?)(?=\d+\.|$)', text, re.DOTALL)
+    return [item.strip() for item in items if item.strip()]
 
-            - Extract any examples from the prompt into a subsection of OUTPUT INSTRUCTIONS called EXAMPLE
+def extract_bullet_points(text):
+    """Extract bullet points from text"""
+    import re
+    items = re.findall(r'-\s*(.*?)(?=-|$)', text, re.DOTALL)
+    return [item.strip() for item in items if item.strip()]
 
-            # OUTPUT INSTRUCTIONS:
-            - Only output Markdown
+def deduplicate_list(items):
+    """Remove duplicates while preserving order"""
+    seen = set()
+    return [x for x in items if not (x in seen or seen.add(x))]
 
-            - All sections should be Heading level 1
+def format_numbered_list(items):
+    return '\n'.join(f"{i+1}. {item}" for i, item in enumerate(items))
 
-            - Subsections should be one Heading level higher than its parent section
-
-            - All bullets should have their own paragraph
-
-            - Format the meeting minutes with specific sections: Meeting Agenda Topics, Discussion Topics, Recommendation, and Action Plan
-
-            - Under Meeting Agenda Topics, extract and list topics as numbered headings
-
-            - Under Discussion Topics, include each extracted heading as its own topic with related sub-points and details as bullets
-
-            - Under Recommendation, include generated recommendations as bullets
-
-            - Under Action Plan, include generated action items as bullets
-
-            - Ensure you follow ALL these instructions when creating your output
-
-            ## EXAMPLE:
-            ## Meeting Agenda Topics
-            1. [Extract and add the topics as Headings]
-            ## Discussion Topics
-            1. [Each of the extracted headings as its own topic]
-            - [Extract the sub-points or details for the topic in the heading]
-            ## Recommendation
-            - [Generate Recommendations]
-            ## Action Plan
-            - [Generate Action Plan]
-            
-
-            # INPUT
-            INPUT:
-            """},
-            {"role": "user", "content": f"Title: {title}\nDescription: {description}\n\nCleaned transcript:\n{cleaned_text}"}
-        ]
-    )
-    return response.choices[0].message.content
+def format_bullet_points(items):
+    return '\n'.join(f"- {item}" for item in items)
 
 st.set_page_config(page_title="Meeting Minutes Generator", layout="wide")
 initialize_session_state()
