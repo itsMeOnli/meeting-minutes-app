@@ -4,6 +4,7 @@ import tempfile
 import os
 from pydub import AudioSegment
 import tiktoken
+import time
 
 CHUNK_SIZE = 24 * 1024 * 1024
 MAX_SINGLE_FILE = 25 * 1024 * 1024
@@ -50,7 +51,7 @@ def count_tokens(text, model="gpt-4"):
     return len(encoding.encode(text))
 
 # Add text chunking function
-def chunk_text(text, max_tokens=30000):
+def chunk_text(text, max_tokens=4000):
     sentences = text.split('. ')
     chunks = []
     current_chunk = []
@@ -74,71 +75,79 @@ def clean_transcript_in_chunks(client, transcript, title, description):
     chunks = chunk_text(transcript)
     cleaned_chunks = []
     
+    # First pass: Clean with GPT-3.5
     for i, chunk in enumerate(chunks):
-        response = client.chat.completions.create(
-            model="gpt-4",
-            messages=[
-                {"role": "system", "content": """
-                # IDENTITY and PURPOSE
+        time.sleep(3)  # Rate limit handling
+        try:
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": "Clean and format this part of the meeting transcript. Remove filler words and correct grammar while preserving key information."},
+                    {"role": "user", "content": f"Part {i+1}/{len(chunks)}\nTitle: {title}\nDescription: {description}\n\nTranscript chunk:\n{chunk}"}
+                ]
+            )
+            cleaned_chunks.append(response.choices[0].message.content)
+        except Exception as e:
+            st.error(f"Error in chunk {i+1}: {str(e)}")
+            time.sleep(60)  # Wait longer if error occurs
+            continue
 
-                You are an expert at cleaning up broken and, malformatted, text, and formatting meeting transcripts. For example: line breaks in weird places, etc. 
-
-                # Steps
-
-                - Read the entire document and fully understand it.
-                - Remove any strange line breaks that disrupt formatting.
-                - Add capitalization, punctuation, line breaks, paragraphs and other formatting where necessary.
-                - Do NOT change any content or spelling whatsoever.
-
-                # OUTPUT INSTRUCTIONS
-
-                - Output the full, properly-formatted text.
-                - Do not output warnings or notes—just the requested sections.
-
-                # INPUT:
-
-                INPUT:
-                """},
-                {"role": "user", "content": f"Part {i+1}/{len(chunks)}\nTitle: {title}\nDescription: {description}\n\nTranscript chunk:\n{chunk}"}
-            ]
-        )
-        cleaned_chunks.append(response.choices[0].message.content)
+    # Second pass: Summarize with GPT-4
+    combined_clean = " ".join(cleaned_chunks)
+    summary_chunks = chunk_text(combined_clean, max_tokens=6000)
+    final_summary = []
     
-    return ' '.join(cleaned_chunks)
+    for i, chunk in enumerate(summary_chunks):
+        time.sleep(3)
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4",
+                messages=[
+                    {"role": "system", "content": "Create a concise summary of this meeting segment, focusing on key points."},
+                    {"role": "user", "content": f"Title: {title}\nDescription: {description}\n\nTranscript:\n{chunk}"}
+                ]
+            )
+            final_summary.append(response.choices[0].message.content)
+        except Exception as e:
+            st.error(f"Error in summary chunk {i+1}: {str(e)}")
+            time.sleep(60)
+            continue
+            
+    return "\n\n".join(final_summary)
 
-def clean_transcript_in_chunks(client, transcript, title, description):
-    chunks = chunk_text(transcript)
-    cleaned_chunks = []
+# def clean_transcript_in_chunks(client, transcript, title, description):
+#     chunks = chunk_text(transcript)
+#     cleaned_chunks = []
     
-    # First pass: Clean each chunk
-    for i, chunk in enumerate(chunks):
-        response = client.chat.completions.create(
-            model="gpt-4",
-            messages=[
-                {"role": "system", 
-                "content": """
-                # IDENTITY and PURPOSE
-                You are an expert at cleaning up broken and, malformatted, text, and formatting meeting transcripts. For example: line breaks in weird places, etc.
+#     # First pass: Clean each chunk
+#     for i, chunk in enumerate(chunks):
+#         response = client.chat.completions.create(
+#             model="gpt-4",
+#             messages=[
+#                 {"role": "system", 
+#                 "content": """
+#                 # IDENTITY and PURPOSE
+#                 You are an expert at cleaning up broken and, malformatted, text, and formatting meeting transcripts. For example: line breaks in weird places, etc.
                 
-                # Steps
-                - Read the entire document and fully understand it.
-                - Remove any strange line breaks that disrupt formatting.
-                - Add capitalization, punctuation, line breaks, paragraphs and other formatting where necessary.
-                - Do NOT change any content or spelling whatsoever.
+#                 # Steps
+#                 - Read the entire document and fully understand it.
+#                 - Remove any strange line breaks that disrupt formatting.
+#                 - Add capitalization, punctuation, line breaks, paragraphs and other formatting where necessary.
+#                 - Do NOT change any content or spelling whatsoever.
                 
-                # OUTPUT INSTRUCTIONS
-                - Output the full, properly-formatted text.
-                - Do not output warnings or notes—just the requested sections.
+#                 # OUTPUT INSTRUCTIONS
+#                 - Output the full, properly-formatted text.
+#                 - Do not output warnings or notes—just the requested sections.
                 
-                # INPUT:
-                INPUT:
-                """
-                },
-                {"role": "user", 
-                "content": f"Part {i+1}/{len(chunks)}\nTitle: {title}\nDescription: {description}\n\nTranscript chunk:\n{chunk}"}
-            ]
-        )
-        cleaned_chunks.append(response.choices[0].message.content)
+#                 # INPUT:
+#                 INPUT:
+#                 """
+#                 },
+#                 {"role": "user", 
+#                 "content": f"Part {i+1}/{len(chunks)}\nTitle: {title}\nDescription: {description}\n\nTranscript chunk:\n{chunk}"}
+#             ]
+#         )
+#         cleaned_chunks.append(response.choices[0].message.content)
     
     # Second pass: Summarize the cleaned chunks
     combined_clean = " ".join(cleaned_chunks)
