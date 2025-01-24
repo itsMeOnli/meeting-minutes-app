@@ -268,7 +268,7 @@ if st.session_state.step == 1:
         st.session_state.title = title
         st.session_state.description = description
         st.session_state.step = 2
-        st.experimental_rerun()
+        st.rerun()
 
 elif st.session_state.step == 2:
     st.subheader("Step 2: Upload Audio")
@@ -297,7 +297,7 @@ elif st.session_state.step == 2:
                 st.session_state.transcription = transcript_text
                 os.unlink(audio_path)
                 st.session_state.step = 3
-                st.experimental_rerun()
+                st.rerun()
                 
             except Exception as e:
                 st.error(f"Error during transcription: {str(e)}")
@@ -316,7 +316,7 @@ elif st.session_state.step == 3:
                 st.session_state.description
             )
         st.session_state.step = 4
-        st.experimental_rerun()
+        st.rerun()
 
 elif st.session_state.step == 4:
     st.subheader("Step 4: Review Cleaned Text")
@@ -333,7 +333,7 @@ elif st.session_state.step == 4:
                 st.session_state.description
             )
         st.session_state.step = 5
-        st.experimental_rerun()
+        st.rerun()
 
 elif st.session_state.step == 5:
     st.subheader("Step 5: Meeting Minutes")
@@ -345,11 +345,11 @@ elif st.session_state.step == 5:
         for key in list(st.session_state.keys()):
             del st.session_state[key]
         initialize_session_state()
-        st.experimental_rerun()
+        st.rerun()
 
 st.sidebar.markdown("---")
 if st.sidebar.button("Reset"):
     for key in list(st.session_state.keys()):
         del st.session_state[key]
     initialize_session_state()
-    st.experimental_rerun()
+    st.rerun()
