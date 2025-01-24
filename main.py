@@ -309,7 +309,7 @@ elif st.session_state.step == 3:
     
     if st.button("Clean Transcript"):
         with st.spinner("Cleaning transcript..."):
-            st.session_state.cleaned_text = clean_transcript(
+            st.session_state.cleaned_text = clean_transcript_in_chunks(
                 client, 
                 st.session_state.transcription,
                 st.session_state.title,
